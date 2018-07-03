@@ -2,16 +2,35 @@ from bs4 import BeautifulSoup
 import urllib.request as urllib
 import random
 from keras.models import Sequential, load_model
-from keras.layers import Dense, Activation, LSTM, BatchNormalization
+from keras.layers import Dense, Activation, LSTM, BatchNormalization, TimeDistributed
 from keras.optimizers import RMSprop
 from keras.callbacks import LambdaCallback
 from keras.callbacks import TensorBoard
 from keras.callbacks import ModelCheckpoint
+from keras.utils import Sequence
 import numpy as np
 import sys
 
 
 root = "file:./data/"
+
+# parallelizes loading the input data for more efficient resource usage/less bottleneck
+# must implement getitem and len to inherit from sequence
+# TODO: make sure this modifies the memory in-place and doesn't copy it
+class InputDataSequence(Sequence):
+
+    def __init__(self, x_input, y_input, batch_size):
+        self.x, self.y = x_input, y_input
+        self.batch_size = batch_size
+
+    def __len__(self):
+        return int(np.ceil(len(self.x) / float(self.batch_size)))
+
+    def __getitem__(self, index):
+        batch_x = self.x[index * self.batch_size :(index+1) * self.batch_size]
+        batch_y = self.y[index * self.batch_size :(index+1) * self.batch_size]
+        return np.array(batch_x), np.array(batch_y)
+
 
 def source_from_html(url):
     html = urllib.urlopen(url)
@@ -43,6 +62,8 @@ print('char count:', char_count)
 char_to_index = dict((c, i) for i, c in enumerate(chars))
 index_to_char = dict((i, c) for i, c in enumerate(chars))
 
+# TODO: increasing sequence_length may allow for the network to "remember" farther
+# back and generate more coherent results
 # split the source into overlapping sequences of characters
 sequence_length = 40 # all sequences are this length if the source is
 sequence_step = 3 # amount offset from each sequence to the next
@@ -68,10 +89,17 @@ for i, sequence in enumerate(sequences):
 # would likely allow it to capture higher level abstractions,
 # at least on a grammatical level.  run it with 1 first since
 # it will train quicker and then once I have an MVP, improve it
+# TODO: try adding dropout after each LSTM layer, or maybe between every
+# layer; should make it less sensitive to overfitting and allow you to
+# increase the learning rate significantly
+# TODO: could also look into the LSTM stateful argument as a way to generate
+# large chunks of text once trained, though I don't think it would work while
+# training
 out_dim = 128
 
 model = Sequential()
-model.add(LSTM(out_dim, input_shape=(sequence_length, char_count)))
+model.add(LSTM(out_dim, input_shape=(sequence_length, char_count), return_sequences=True))
+model.add(LSTM(out_dim))
 model.add(Dense(char_count))
 model.add(Activation('softmax'))
 
@@ -143,5 +171,10 @@ except OSError:
 batch_size = 128
 epochs=60
 callbacks=[progress_callback, model_checkpoint, tensorboard_callback]
-generate_text(400)
-model.fit(x_train, y_train, batch_size=batch_size, epochs=epochs, callbacks=callbacks)
+#generate_text(400)
+
+print("Input processing complete.  Creating Input Data Sequence...")
+inputDataSequence = InputDataSequence(x_train, y_train, batch_size)
+print("Input Data Sequence created.  Commencing training...")
+model.fit_generator(inputDataSequence, epochs=epochs, callbacks=callbacks, use_multiprocessing=False)
+# model.fit(x_train, y_train, batch_size=batch_size, epochs=epochs, callbacks=callbacks)
