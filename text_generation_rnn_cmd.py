@@ -1,7 +1,7 @@
 from bs4 import BeautifulSoup
 import urllib.request as urllib
 import random
-from keras.models import Sequential
+from keras.models import Sequential, load_model
 from keras.layers import Dense, Activation, LSTM, BatchNormalization
 from keras.optimizers import RMSprop
 from keras.callbacks import LambdaCallback
@@ -11,7 +11,7 @@ import numpy as np
 import sys
 
 
-root = "file:./"
+root = "file:./data/"
 
 def source_from_html(url):
     html = urllib.urlopen(url)
@@ -76,7 +76,7 @@ model.add(LSTM(out_dim, input_shape=(sequence_length, char_count)))
 model.add(Dense(char_count))
 model.add(Activation('softmax'))
 
-optimizer = RMSprop(lr=.001)
+optimizer = RMSprop(lr=.0005)
 # we use crossentropy because it's a form of classification problem,
 # where the classes are which character comes next
 model.compile(loss='categorical_crossentropy', optimizer=optimizer)
@@ -136,7 +136,7 @@ model_checkpoint = ModelCheckpoint("./model-checkpoint.ckpt")
 tensorboard_callback = TensorBoard(log_dir='./tensorboard-logs', write_images=True)
 
 try:
-    model.load_weights("./model-checkpoint.checkpoint")
+    model = load_model("./model-checkpoint.ckpt")
     print("checkpoint file found; training from checkpoint weights")
 except OSError:
     print("checkpoint file not found; training from initial weights...")
