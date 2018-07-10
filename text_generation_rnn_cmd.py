@@ -71,6 +71,7 @@ for i, sequence in enumerate(sequences):
 out_dim = 128
 
 model = Sequential()
+model.add(LSTM(out_dim, input_shape=(sequence_length, char_count), return_sequences=True))
 model.add(LSTM(out_dim, input_shape=(sequence_length, char_count)))
 model.add(Dense(char_count))
 model.add(Activation('softmax'))
@@ -132,7 +133,7 @@ def report_epoch_progress(epoch, logs):
 
 progress_callback = LambdaCallback(on_epoch_end=report_epoch_progress)
 model_checkpoint = ModelCheckpoint("./model-checkpoint.ckpt")
-tensorboard_callback = TensorBoard(log_dir='./tensorboard-logs_LR_ONETENTH', write_images=True)
+tensorboard_callback = TensorBoard(log_dir='./tensorboard-logs', write_images=True)
 
 try:
     model.load_weights("./model-checkpoint.checkpoint")
