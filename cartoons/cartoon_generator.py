@@ -15,9 +15,11 @@ import random
 from skimage import io
 from skimage.transform import downscale_local_mean
 import numpy as np
+from keras import backend as K
+from keras.engine.topology import Layer
 from keras.utils import Sequence
 from keras.models import Model
-from keras.layers import Input, Conv2D, Conv2DTranspose, MaxPooling2D, UpSampling2D, Dense, Flatten, Activation, Reshape
+from keras.layers import Multiply, Input, Conv2D, Conv2DTranspose, MaxPooling2D, UpSampling2D, Dense, Flatten, Activation, Reshape
 from keras.optimizers import RMSprop, Adam
 from keras.callbacks import LambdaCallback
 from keras.callbacks import ModelCheckpoint
@@ -58,69 +60,6 @@ def load_metadata():
             metadatum = row[:2] + [int(n) for n in re.findall(r'\d+', row[2])]
             metadata.append(metadatum)
     return metadata
-
-
-def plot_results(models,
-                 data,
-                 batch_size=128,
-                 model_name="vae_mnist"):
-    """Plots labels and MNIST digits as function of 2-dim latent vector
-    # Arguments:
-        models (tuple): encoder and decoder models
-        data (tuple): test data and label
-        batch_size (int): prediction batch size
-        model_name (string): which model is using this function
-    """
-
-    pass # need to install graphviz for this to work
-#    encoder, decoder = models
-#    x_test, y_test = data
-#    os.makedirs(model_name, exist_ok=True)
-#
-#    filename = os.path.join(model_name, "vae_mean.png")
-#    # display a 2D plot of the digit classes in the latent space
-#    z_mean, _, _ = encoder.predict(x_test,
-#                                   batch_size=batch_size)
-#    plt.figure(figsize=(12, 10))
-#    plt.scatter(z_mean[:, 0], z_mean[:, 1], c=y_test)
-#    plt.colorbar()
-#    plt.xlabel("z[0]")
-#    plt.ylabel("z[1]")
-#    plt.savefig(filename)
-#    plt.show()
-#
-#    filename = os.path.join(model_name, "digits_over_latent.png")
-#    # display a 30x30 2D manifold of digits
-#    n = 30
-#    digit_size = 28
-#    figure = np.zeros((digit_size * n, digit_size * n))
-#    # linearly spaced coordinates corresponding to the 2D plot
-#    # of digit classes in the latent space
-#    grid_x = np.linspace(-4, 4, n)
-#    grid_y = np.linspace(-4, 4, n)[::-1]
-#
-#    for i, yi in enumerate(grid_y):
-#        for j, xi in enumerate(grid_x):
-#            z_sample = np.array([[xi, yi]])
-#            x_decoded = decoder.predict(z_sample)
-#            digit = x_decoded[0].reshape(digit_size, digit_size)
-#            figure[i * digit_size: (i + 1) * digit_size,
-#                   j * digit_size: (j + 1) * digit_size] = digit
-#
-#    plt.figure(figsize=(10, 10))
-#    start_range = digit_size // 2
-#    end_range = n * digit_size + start_range + 1
-#    pixel_range = np.arange(start_range, end_range, digit_size)
-#    sample_range_x = np.round(grid_x, 1)
-#    sample_range_y = np.round(grid_y, 1)
-#    plt.xticks(pixel_range, sample_range_x)
-#    plt.yticks(pixel_range, sample_range_y)
-#    plt.xlabel("z[0]")
-#    plt.ylabel("z[1]")
-#    plt.imshow(figure, cmap='Greys_r')
-#    plt.savefig(filename)
-#    plt.show()
-
 
 
 metadata = load_metadata()
@@ -203,31 +142,92 @@ class DataProvider(Sequence):
 # TODO: does this need to correspond to the # output layers for hte encoder?
 latent_dim = 2 # TODO: this will probably need to be upped a lot (or does it, since it's not one-hot but just regular vectors?
 
+# TODO: probably will have to implement build and compute_output_shape since
+# it's not really supposed to inherit specifically from Conv2D
+class PixelCNN(Conv2D):
+    ''' Start w/ simple PixelCNN and then make it better once it works '''
+
+    def __init__(self, filters, rank, kernel_size, **kwargs):
+        self.filters = filters
+        self.kernel_size = kernel_size
+        super(PixelCNN, self).__init__(filters, rank, kernel_size, **kwargs)
+
+    # this is where you will define your weights. This method must set
+    # self.built = True at the end, which can be done by calling
+    # super([Layer], self).build()
+    # implemented in base ok i think
+    #def build(self, input_shape):
+        
+    def _crop_right(self, x):
+        x_shape = K.int_shape(x)
+        return x[:,:,:x_shape[2]-1,:]
+
+    # this is where the layer's logic lives. Unless you want your layer to
+    # support masking, you only have to care about the first argument
+    # passed to call: the input tensor
+    def call(self, xW):
+        ''' calculate gated activation maps given input maps '''
+
+        # TODO: not sure why the example crops right, try it without it first
+        # print(xW.shape)
+        # xW = Lambda(self._crop_right)(xW)
+
+        # even res displays the right dimensions when manually throwing an error,
+        # so where  is it going wrong?
+        
+        # f and g are for the 2 sets of weights for the 2 terms in the activation
+        # function
+        # first apply the filters
+        xW_f = Lambda(lambda x: x[:,:,:,:self.filters])(xW)
+        xW_g = Lambda(lambda x: x[:,:,:,self.filters:])(xW)
+
+        # and then apply the activation functions
+        xW_f = Lambda(lambda x: K.tanh(x))(xW_f)
+        xW_g = Lambda(lambda x: K.sigmoid(x))(xW_g)
+
+        # and merge them
+        res = Multiply()([xW_f, xW_g])
+        
+        return res
+    # in case your layer modifies the shape of its input, you should
+    # specify here the shape transformation logic. This allows Keras to
+    # do automatic shape inference
+    # implemented in base ok i think
+    def compute_output_shape(self, input_shape):
+        return input_shape
+
+
 # decoder
 # upscales the image between convolutions until it gets to the original dim,
 # so using different sized images will require this to be adjusted
 input = Input(shape=(num_classes,), name='z_sampling')
-layer = Dense(2700, activation='relu')(input)
-layer = Dense(2700, activation='relu')(layer)
-layer = Dense(2700, activation='relu')(layer)
-layer = Reshape((30, 90, 1))(layer)
-layer = Conv2DTranspose(32, (3, 3), padding='same', activation='sigmoid')(layer)
-layer = Conv2DTranspose(32, (3, 3), padding='same', activation='sigmoid')(layer)
-layer = UpSampling2D(size=(5, 5))(layer)
-layer = Conv2DTranspose(32, (3, 3), padding='same', activation='sigmoid')(layer)
+# layer = Dense(2700, activation='relu')(input)
+# layer = Dense(2700, activation='relu')(layer)
+# layer = Dense(2700, activation='relu')(layer)
+# layer = Reshape((30, 90, 1))(layer)
+# layer = Conv2DTranspose(32, (3, 3), padding='same', activation='sigmoid')(layer)
+# layer = Conv2DTranspose(32, (3, 3), padding='same', activation='sigmoid')(layer)
+# layer = UpSampling2D(size=(5, 5))(layer)
+# layer = Conv2DTranspose(32, (3, 3), padding='same', activation='sigmoid')(layer)
 #layer = UpSampling2D(size=(2, 2))(layer)
-output = Conv2D(1, (3, 3), padding='same', activation='sigmoid')(layer)
+# output = Conv2D(1, (3, 3), padding='same', activation='sigmoid')(layer)
+
+layer = Dense(67500, activation='sigmoid')(input)
+layer = Reshape((150, 450, 1))(layer)
+# TODO: the shape is the same as returned by Conv2D, but that also throws an error
+# substituting with Conv2D returns ValueError: cannot select an axis to squeeze out which has size not equal to one
+# args are filters, rank, kernel size
+output = PixelCNN(1, 2, 16)(layer)
+# layer = PixelCNN(32, 2, 16)(layer)
+# output = UpSampling2D(size=(6, 6))(layer)
 
 
 decoder = Model(input, output, name='decoder')
-decoder.summary()
-# plot_model(decoder, to_file='cartoon_vae_decoder.png', show_shapes=True)
 
 original_dim = 150 * 450 # TODO: set this to just the dimensions of the input later instead of hard coding it
-optimizer = Adam(lr=.0001)
+optimizer = Adam(lr=.00001)
 decoder.compile(loss='binary_crossentropy', optimizer=optimizer) # TODO: find out which optimizer works best
 decoder.summary()
-# plot_model(vae, to_file='cartoon_vae.png', show_shapes=True)
 
 def report_epoch_progress(epoch, logs):
     print('epoch progress report:')
@@ -237,7 +237,9 @@ def report_epoch_progress(epoch, logs):
         latent = np.expand_dims(latent, axis=0)
         #latent = np.array([[0,0,0]])
         print(latent.shape)
+        # the prediction is coming back as None, why?
         img = decoder.predict(latent)
+        print(img.shape)
         img = np.squeeze(img, axis=(0,3))
         img *= 255
         img = img.astype(int)

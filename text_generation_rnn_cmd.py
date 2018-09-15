@@ -2,7 +2,7 @@ from bs4 import BeautifulSoup
 import urllib.request as urllib
 import random
 from keras.models import Sequential, load_model
-from keras.layers import Dense, Activation, LSTM, BatchNormalization
+from keras.layers import Dense, Activation, CuDNNLSTM, BatchNormalization
 from keras.optimizers import RMSprop
 from keras.callbacks import LambdaCallback
 from keras.callbacks import TensorBoard
@@ -102,7 +102,7 @@ char_to_index = dict((c, i) for i, c in enumerate(chars))
 index_to_char = dict((i, c) for i, c in enumerate(chars))
 
 # split the source into overlapping sequences of characters
-sequence_length = 40 # all sequences are this length if the source is
+sequence_length = 128 # all sequences are this length if the source is
 sequence_step = 3 # amount offset from each sequence to the next
 sequences = []
 ground_truth = []
@@ -125,10 +125,10 @@ out_dim = 128
 
 # define the model
 model = Sequential()
-model.add(LSTM(out_dim, input_shape=(sequence_length, char_count), return_sequences=True))
-model.add(LSTM(out_dim, input_shape=(sequence_length, char_count), return_sequences=True))
-model.add(LSTM(out_dim, input_shape=(sequence_length, char_count), return_sequences=True))
-model.add(LSTM(out_dim, input_shape=(sequence_length, char_count)))
+model.add(CuDNNLSTM(out_dim, input_shape=(sequence_length, char_count), return_sequences=True))
+model.add(CuDNNLSTM(out_dim, input_shape=(sequence_length, char_count), return_sequences=True))
+model.add(CuDNNLSTM(out_dim, input_shape=(sequence_length, char_count), return_sequences=True))
+model.add(CuDNNLSTM(out_dim, input_shape=(sequence_length, char_count)))
 model.add(Dense(char_count))
 model.add(Dense(char_count))
 model.add(Dense(char_count))

@@ -1,6 +1,8 @@
-.ipynb_checkpoints/*
+**/.ipynb_checkpoints/*
 *.ckpt
 *.html
 tensorboard-logs*
 data/*
 logs/*
+cartoons/date_ranges.txt
+cartoone/epoch-output/*
