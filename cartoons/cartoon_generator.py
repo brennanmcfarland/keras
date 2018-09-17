@@ -147,54 +147,56 @@ latent_dim = 2 # TODO: this will probably need to be upped a lot (or does it, si
 class PixelCNN(Conv2D):
     ''' Start w/ simple PixelCNN and then make it better once it works '''
 
-    def __init__(self, filters, rank, kernel_size, **kwargs):
-        self.filters = filters
-        self.kernel_size = kernel_size
-        super(PixelCNN, self).__init__(filters, rank, kernel_size, **kwargs)
+    def __init__(self, *args, mask_current, n_channels=3, mono=False, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.mask_current = mask_current
+        self.mask = None
 
     # this is where you will define your weights. This method must set
     # self.built = True at the end, which can be done by calling
     # super([Layer], self).build()
-    # implemented in base ok i think
-    #def build(self, input_shape):
-        
-    def _crop_right(self, x):
-        x_shape = K.int_shape(x)
-        return x[:,:,:x_shape[2]-1,:]
+    def build(self, input_shape):
+        super().build(input_shape)
+        self.mask = np.zeros(self.W_shape) # W_shape must be inherit from Conv2D or layer
+        assert mask.shape[0] == mask.shape(1) # assert that mask height = width
+        filter_size = self.mask.shape[0]
+        filter_center = filter_size/2
+
+        # unmask everything before the center
+        self.mask[:math.floor(filter_center)] = 1 # unmask rows above
+        self.mask[:math.ceil(filter_center), :math.floor(filter_center)] = 1 # unmask cols to the left in same row
+
+        if not self.mask_current:
+            self.mask[math.ceil(filter_center), math.ceil(filter_center)] = 1
+
+        self.mask = K.variable(self.mask)
 
     # this is where the layer's logic lives. Unless you want your layer to
     # support masking, you only have to care about the first argument
     # passed to call: the input tensor
-    def call(self, xW):
+    def call(self, x, mask=None):
         ''' calculate gated activation maps given input maps '''
+        output = K.conv2d(x, self.W * self.mask,
+                          strides=self.subsample,
+                          border_mode=self.border_mode,
+                          dim_ordering=self.dim_ordering,
+                          filter_shape=self.W_shape)
+        if self.bias:
+            if self.dim_ordering == 'tf':
+                output += K.reshape(self.b, (1, 1, 1, self.nb_filter))
+            else:
+                raise ValueError('PixelCNN layer works with tensorflow backend only')
+        output = self.activation(output)
+        return output
 
-        # TODO: not sure why the example crops right, try it without it first
-        # print(xW.shape)
-        # xW = Lambda(self._crop_right)(xW)
-
-        # even res displays the right dimensions when manually throwing an error,
-        # so where  is it going wrong?
-        
-        # f and g are for the 2 sets of weights for the 2 terms in the activation
-        # function
-        # first apply the filters
-        xW_f = Lambda(lambda x: x[:,:,:,:self.filters])(xW)
-        xW_g = Lambda(lambda x: x[:,:,:,self.filters:])(xW)
-
-        # and then apply the activation functions
-        xW_f = Lambda(lambda x: K.tanh(x))(xW_f)
-        xW_g = Lambda(lambda x: K.sigmoid(x))(xW_g)
-
-        # and merge them
-        res = Multiply()([xW_f, xW_g])
-        
-        return res
+    def get_config(self):
+        return dict(list(super().get_config().items()) + list({'mask': self.mask_current}.items()))
     # in case your layer modifies the shape of its input, you should
     # specify here the shape transformation logic. This allows Keras to
     # do automatic shape inference
     # implemented in base ok i think
-    def compute_output_shape(self, input_shape):
-        return input_shape
+    # def compute_output_shape(self, input_shape):
+    #    return input_shape
 
 
 # decoder
@@ -217,7 +219,7 @@ layer = Reshape((150, 450, 1))(layer)
 # TODO: the shape is the same as returned by Conv2D, but that also throws an error
 # substituting with Conv2D returns ValueError: cannot select an axis to squeeze out which has size not equal to one
 # args are filters, rank, kernel size
-output = PixelCNN(1, 2, 16)(layer)
+output = PixelCNN(1, 7, 7, mask_current=True, border_mode='same')(layer)
 # layer = PixelCNN(32, 2, 16)(layer)
 # output = UpSampling2D(size=(6, 6))(layer)
 
