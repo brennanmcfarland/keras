@@ -8,6 +8,7 @@ from keras import backend as K
 import matplotlib.pyplot as plt
 import argparse
 import os
+import math
 
 import csv
 import re
@@ -132,6 +133,8 @@ class DataProvider(Sequence):
     
     def __getitem__(self, idx):
         x, y = get_batch(self.batch_size, self.metadata)
+        print("x shape: ", x.shape)
+        print("y shape: ", y.shape)
         return y, x
 
 
@@ -147,18 +150,28 @@ latent_dim = 2 # TODO: this will probably need to be upped a lot (or does it, si
 class PixelCNN(Conv2D):
     ''' Start w/ simple PixelCNN and then make it better once it works '''
 
-    def __init__(self, *args, mask_current, n_channels=3, mono=False, **kwargs):
-        super().__init__(*args, **kwargs)
+    def __init__(self, filters, *args, mask_current, n_channels=1, mono=False, **kwargs):
         self.mask_current = mask_current
         self.mask = None
+        self.num_filters = filters
+        super(PixelCNN, self).__init__(filters, *args, **kwargs)
+
 
     # this is where you will define your weights. This method must set
     # self.built = True at the end, which can be done by calling
     # super([Layer], self).build()
     def build(self, input_shape):
-        super().build(input_shape)
-        self.mask = np.zeros(self.W_shape) # W_shape must be inherit from Conv2D or layer
-        assert mask.shape[0] == mask.shape(1) # assert that mask height = width
+        # kernel.shape was W_shape
+        #kernel_shape = tuple([self.num_filters] + list(input_shape)[1:])
+        kernel_shape = (150, 450, 1, 1)
+        print(kernel_shape)
+        # TODO: fiddle with dimensions or better make them automatic/parrams
+        self.kernel = self.add_weight(name='kernel',
+                                      shape=kernel_shape,
+                                      initializer='uniform',
+                                      trainable=True)
+        self.mask = np.zeros(self.kernel.shape) # W_shape must be inherit from Conv2D or layer
+        #assert self.mask.shape[0] == self.mask.shape[1] # assert that mask height = width
         filter_size = self.mask.shape[0]
         filter_center = filter_size/2
 
@@ -171,21 +184,35 @@ class PixelCNN(Conv2D):
 
         self.mask = K.variable(self.mask)
 
+        self.bias = None
+        self.built = True
+        #super(PixelCNN, self).build(input_shape)
+
     # this is where the layer's logic lives. Unless you want your layer to
     # support masking, you only have to care about the first argument
     # passed to call: the input tensor
     def call(self, x, mask=None):
         ''' calculate gated activation maps given input maps '''
-        output = K.conv2d(x, self.W * self.mask,
-                          strides=self.subsample,
-                          border_mode=self.border_mode,
-                          dim_ordering=self.dim_ordering,
-                          filter_shape=self.W_shape)
-        if self.bias:
-            if self.dim_ordering == 'tf':
-                output += K.reshape(self.b, (1, 1, 1, self.nb_filter))
-            else:
-                raise ValueError('PixelCNN layer works with tensorflow backend only')
+        #print("KERNEL:")
+        #print(K.eval(self.kernel))
+        #print("MASKED KERNEL:")
+        #print(K.eval(self.kernel * self.mask))
+        # kernel used to be W
+        output = K.conv2d(x, self.kernel * self.mask,
+                          strides=self.strides,
+                          padding=self.padding,
+                          data_format=self.data_format)
+        #return output
+        # the above used to also include filter_shape=self.kernel.shape,
+        # but I think that was just to specify the output shape and is
+        # now deprecated
+        #if self.bias:
+        #    if self.data_format == 'channels_last':
+        #        # get_weights() returns [W, b]
+        #        output += K.reshape(self.get_weights()[1], (1, 1, 1, self.filters))
+        #    else:
+        #        print(self.data_format)
+        #        raise ValueError('PixelCNN layer works with tensorflow backend only')
         output = self.activation(output)
         return output
 
@@ -195,13 +222,16 @@ class PixelCNN(Conv2D):
     # specify here the shape transformation logic. This allows Keras to
     # do automatic shape inference
     # implemented in base ok i think
-    # def compute_output_shape(self, input_shape):
-    #    return input_shape
+    def compute_output_shape(self, input_shape):
+        return super(PixelCNN, self).compute_output_shape(input_shape)
+
 
 
 # decoder
 # upscales the image between convolutions until it gets to the original dim,
 # so using different sized images will require this to be adjusted
+# input = Input(shape=(150, 450, 3, num_classes), name='z_sampling')
+
 input = Input(shape=(num_classes,), name='z_sampling')
 # layer = Dense(2700, activation='relu')(input)
 # layer = Dense(2700, activation='relu')(layer)
@@ -219,7 +249,7 @@ layer = Reshape((150, 450, 1))(layer)
 # TODO: the shape is the same as returned by Conv2D, but that also throws an error
 # substituting with Conv2D returns ValueError: cannot select an axis to squeeze out which has size not equal to one
 # args are filters, rank, kernel size
-output = PixelCNN(1, 7, 7, mask_current=True, border_mode='same')(layer)
+output = PixelCNN(1, 7, strides=1, mask_current=True, padding='same')(layer)
 # layer = PixelCNN(32, 2, 16)(layer)
 # output = UpSampling2D(size=(6, 6))(layer)
 
