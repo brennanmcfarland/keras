@@ -25,9 +25,8 @@ from keras.optimizers import RMSprop, Adam
 from keras.callbacks import LambdaCallback
 from keras.callbacks import ModelCheckpoint
 from keras.callbacks import TensorBoard
+from keras import initializers
 
-
-# https://github.com/keras-team/keras/blob/master/examples/variational_autoencoder.py
 
 # reparameterization trick
 # instead of sampling from Q(z|X), sample eps = N(0,I)
@@ -110,7 +109,8 @@ def get_batch(batch_size, metadata):
         img_downscaled /= 255# TODO: test to see if this is actually helpful, maybe research it
         batch_x[i] = np.pad(img_downscaled, ((0,0), (0, img_y-img_downscaled.shape[1])), 'maximum')
         batch_y[i][class_to_id[metadatum[0]]] = 1
-    return np.expand_dims(batch_x, axis=3), batch_y
+    #return np.expand_dims(batch_x, axis=3), batch_y
+    return np.expand_dims(batch_x, axis=3), np.expand_dims(batch_x, axis=3)
     # TODO: need to have it differentiate different strip sizes, ie sunday vs weekday strips
 
 
@@ -133,8 +133,6 @@ class DataProvider(Sequence):
     
     def __getitem__(self, idx):
         x, y = get_batch(self.batch_size, self.metadata)
-        print("x shape: ", x.shape)
-        print("y shape: ", y.shape)
         return y, x
 
 
@@ -145,15 +143,14 @@ class DataProvider(Sequence):
 # TODO: does this need to correspond to the # output layers for hte encoder?
 latent_dim = 2 # TODO: this will probably need to be upped a lot (or does it, since it's not one-hot but just regular vectors?
 
-# TODO: probably will have to implement build and compute_output_shape since
-# it's not really supposed to inherit specifically from Conv2D
 class PixelCNN(Conv2D):
     ''' Start w/ simple PixelCNN and then make it better once it works '''
 
-    def __init__(self, filters, *args, mask_current, n_channels=1, mono=False, **kwargs):
+    def __init__(self, filters, *args, mask_current=True, n_channels=1, mono=False, **kwargs):
         self.mask_current = mask_current
         self.mask = None
         self.num_filters = filters
+        self.num_channels = n_channels
         super(PixelCNN, self).__init__(filters, *args, **kwargs)
 
 
@@ -162,16 +159,17 @@ class PixelCNN(Conv2D):
     # super([Layer], self).build()
     def build(self, input_shape):
         # kernel.shape was W_shape
-        #kernel_shape = tuple([self.num_filters] + list(input_shape)[1:])
-        kernel_shape = (150, 450, 1, 1)
-        print(kernel_shape)
+        # kernel_shape = (150, 450, 1, 1)
+        print(self.kernel_size)
+        #kernel_shape = (3, 3, 1, 1)
+        kernel_shape = self.kernel_size + (self.num_channels, self.num_channels)
         # TODO: fiddle with dimensions or better make them automatic/parrams
         self.kernel = self.add_weight(name='kernel',
                                       shape=kernel_shape,
-                                      initializer='uniform',
+                                      initializer=initializers.random_uniform(minval=-1.0, maxval=1.0),
                                       trainable=True)
         self.mask = np.zeros(self.kernel.shape) # W_shape must be inherit from Conv2D or layer
-        #assert self.mask.shape[0] == self.mask.shape[1] # assert that mask height = width
+        assert self.mask.shape[0] == self.mask.shape[1] # assert that mask height = width
         filter_size = self.mask.shape[0]
         filter_center = filter_size/2
 
@@ -232,7 +230,16 @@ class PixelCNN(Conv2D):
 # so using different sized images will require this to be adjusted
 # input = Input(shape=(150, 450, 3, num_classes), name='z_sampling')
 
-input = Input(shape=(num_classes,), name='z_sampling')
+#input = Input(shape=(num_classes,), name='z_sampling')
+#layer = Dense(67500, activation='sigmoid')(input)
+#layer = Reshape((150, 450, 1))(layer)
+#output = PixelCNN(1, 7, strides=1, mask_current=True, padding='same')(layer)
+
+# TODO: here we're just having it generate from one class, should try to parameterize it
+# later to work for multiple
+input = Input(shape=(150, 450, 1), name='z_sampling')
+output = PixelCNN(1, 7, strides=1, mask_current=True, padding='same')(input)
+
 # layer = Dense(2700, activation='relu')(input)
 # layer = Dense(2700, activation='relu')(layer)
 # layer = Dense(2700, activation='relu')(layer)
@@ -244,12 +251,10 @@ input = Input(shape=(num_classes,), name='z_sampling')
 #layer = UpSampling2D(size=(2, 2))(layer)
 # output = Conv2D(1, (3, 3), padding='same', activation='sigmoid')(layer)
 
-layer = Dense(67500, activation='sigmoid')(input)
-layer = Reshape((150, 450, 1))(layer)
+
 # TODO: the shape is the same as returned by Conv2D, but that also throws an error
 # substituting with Conv2D returns ValueError: cannot select an axis to squeeze out which has size not equal to one
 # args are filters, rank, kernel size
-output = PixelCNN(1, 7, strides=1, mask_current=True, padding='same')(layer)
 # layer = PixelCNN(32, 2, 16)(layer)
 # output = UpSampling2D(size=(6, 6))(layer)
 
@@ -264,12 +269,15 @@ decoder.summary()
 def report_epoch_progress(epoch, logs):
     print('epoch progress report:')
     for i in range(num_classes):
-        latent = np.zeros(num_classes)
-        latent[i] = 1
-        latent = np.expand_dims(latent, axis=0)
+        #latent = np.zeros(num_classes)
+        #latent[i] = 1
+        #latent = np.expand_dims(latent, axis=0)
         #latent = np.array([[0,0,0]])
-        print(latent.shape)
+        #print(latent.shape)
         # the prediction is coming back as None, why?
+        latent = data_test.__getitem__(3)[1]
+        #latent = np.expand_dims(latent, axis=0)
+        print('LATENT: ', latent.shape)
         img = decoder.predict(latent)
         print(img.shape)
         img = np.squeeze(img, axis=(0,3))
@@ -292,7 +300,7 @@ epochs = 60
 report_epoch_progress(None, None)
 decoder.fit_generator(
     data_train,
-    # validation_data=data_test,
+    validation_data=data_test,
     steps_per_epoch=num_data//data_train.batch_size,
     epochs=epochs,
     callbacks=callbacks
