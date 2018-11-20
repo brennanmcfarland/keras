@@ -10,6 +10,7 @@ import argparse
 import os
 import math
 
+import sys
 import csv
 import re
 import random
@@ -89,28 +90,54 @@ def scale_to_target(image, initial_y, target_y, shrink_tolerance, grow_tolerance
         padding = (target_y-initial_y)//2
         return np.pad(image, ((padding, target_y - initial_y - padding),(0,0)), 'maximum')
 
+def get_image(metadata, datum_index):
+    img_x, img_y = 150, 450
+    metadatum = metadata[datum_index]
+    # TODO: we'll need to make it color for some strips later
+    img_raw = io.imread(data_root + 'images/' + metadatum[0] + metadatum[1] + '.png', as_gray=True)
+    # print('raw image: ', img_raw.shape)
+    img_scaled = scale_to_target(img_raw, metadatum[2], img_x*2, 5, 120)
+    return img_scaled
+
 
 # TODO: optimize the batches to use np arrays from the getgo?
 def get_batch(batch_size, metadata):
     img_x, img_y = 150, 450
     batch_x = np.zeros((batch_size, img_x, img_y), dtype=float)
-    batch_y = np.zeros((batch_size, num_classes), dtype=float)
+    batch_y = np.zeros((batch_size, img_x, img_y), dtype=float)
     for i in range(batch_size):
+        datum_indices = np.random.randint(0, len(metadata), size=2)
         img_scaled = None
+        j = 0
         while img_scaled is None:
-            metadatum = metadata[random.randrange(len(metadata))]
-            # TODO: we'll need to make it color for some strips later
-            img_raw = io.imread(data_root + 'images/' + metadatum[0] + metadatum[1] + '.png', as_gray=True)
-            # print('raw image: ', img_raw.shape)
-            img_scaled = scale_to_target(img_raw, metadatum[2], img_x*2, 5, 120)
+            img_scaled = get_image(metadata, (datum_indices[0] + j) % len(metadata))
+            metadatum = metadata[datum_indices[0]]
+            j += 1
+            #datum_indices[0] = (datum_indices[0] + 1) % len(metadata)
+        
         # put it in a tensor after downscaling it and padding it
         img_downscaled = downscale_local_mean(img_scaled, (2, 2))
         # normalize channel values
         img_downscaled /= 255# TODO: test to see if this is actually helpful, maybe research it
         batch_x[i] = np.pad(img_downscaled, ((0,0), (0, img_y-img_downscaled.shape[1])), 'maximum')
-        batch_y[i][class_to_id[metadatum[0]]] = 1
+
+        img_scaled = None
+        j = 0
+        while img_scaled is None:
+            img_scaled = get_image(metadata, (datum_indices[1] + j) % len(metadata))
+            metadatum = metadata[datum_indices[1]]
+            j += 1
+            #datum_indices[1] = (datum_indices[1] + 1) % len(metadata)
+        
+        # put it in a tensor after downscaling it and padding it
+        img_downscaled = downscale_local_mean(img_scaled, (2, 2))
+        # normalize channel values
+        img_downscaled /= 255# TODO: test to see if this is actually helpful, maybe research it
+        batch_y[i] = np.pad(img_downscaled, ((0,0), (0, img_y-img_downscaled.shape[1])), 'maximum')
+
+        #batch_y[i][class_to_id[metadatum[0]]] = 1
     #return np.expand_dims(batch_x, axis=3), batch_y
-    return np.expand_dims(batch_x, axis=3), np.expand_dims(batch_x, axis=3)
+    return np.expand_dims(batch_x, axis=3), np.expand_dims(batch_y, axis=3)
     # TODO: need to have it differentiate different strip sizes, ie sunday vs weekday strips
 
 
@@ -133,6 +160,8 @@ class DataProvider(Sequence):
     
     def __getitem__(self, idx):
         x, y = get_batch(self.batch_size, self.metadata)
+        if x is None or y is None:
+            raise ValueError("input x or y is none")
         return y, x
 
 
@@ -275,7 +304,8 @@ def report_epoch_progress(epoch, logs):
         #latent = np.array([[0,0,0]])
         #print(latent.shape)
         # the prediction is coming back as None, why?
-        latent = data_test.__getitem__(3)[1]
+        example = data_test.__getitem__(3)
+        latent = example[1]
         #latent = np.expand_dims(latent, axis=0)
         print('LATENT: ', latent.shape)
         img = decoder.predict(latent)
@@ -284,8 +314,20 @@ def report_epoch_progress(epoch, logs):
         img *= 255
         img = img.astype(int)
         print('image shape:', img.shape)
-        filename = 'epoch-output/latest-' + str(i) + '.png'
+        filename = 'epoch-output/latest-' + str(i) + '-predicted.png'
         io.imsave(filename, img)
+        actual = example[0]
+        actual = np.squeeze(actual, axis=(0,3))
+        actual *= 255
+        actual = actual.astype(int)
+        filename2 = 'epoch-output/latest-' + str(i) + '-actual.png'
+        io.imsave(filename2, actual)
+
+        latent = np.squeeze(latent, axis=(0,3))
+        latent *= 255
+        latent = latent.astype(int)
+        filename3 = 'epoch-output/latest-' + str(i) + '-input.png'
+        io.imsave(filename3, latent)
 
 
 progress_callback = LambdaCallback(on_epoch_end=report_epoch_progress)
