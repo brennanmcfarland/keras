@@ -100,6 +100,13 @@ def get_image(metadata, datum_index):
     return img_scaled
 
 
+# 1 is white, 0 is black, remember
+def convert_to_sample(img):
+    p_black = .1
+    sample = np.random.choice((0, 1), size=img.shape, p=(p_black, 1.0-p_black)) # p is probability of each option
+    # element-wise max
+    return np.maximum(sample, img)
+
 # TODO: optimize the batches to use np arrays from the getgo?
 def get_batch(batch_size, metadata):
     img_x, img_y = 150, 450
@@ -134,7 +141,7 @@ def get_batch(batch_size, metadata):
         # normalize channel values
         img_downscaled /= 255# TODO: test to see if this is actually helpful, maybe research it
         batch_y[i] = np.pad(img_downscaled, ((0,0), (0, img_y-img_downscaled.shape[1])), 'maximum')
-
+        batch_y = convert_to_sample(batch_x)
         #batch_y[i][class_to_id[metadatum[0]]] = 1
     #return np.expand_dims(batch_x, axis=3), batch_y
     return np.expand_dims(batch_x, axis=3), np.expand_dims(batch_y, axis=3)
