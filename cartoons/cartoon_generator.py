@@ -125,8 +125,8 @@ def get_batch(batch_size, metadata):
         # put it in a tensor after downscaling it and padding it
         img_downscaled = downscale_local_mean(img_scaled, (2, 2))
         # normalize channel values
-        img_downscaled /= 255# TODO: test to see if this is actually helpful, maybe research it
-        batch_x[i] = np.pad(img_downscaled, ((0,0), (0, img_y-img_downscaled.shape[1])), 'maximum')
+        # TODO: was maximum, but maybe manuallly setting to 1 will make ti work better for now
+        batch_x[i] = np.pad(img_downscaled, ((0,0), (0, img_y-img_downscaled.shape[1])), 'constant', constant_values=1)
 
         img_scaled = None
         j = 0
@@ -139,8 +139,9 @@ def get_batch(batch_size, metadata):
         # put it in a tensor after downscaling it and padding it
         img_downscaled = downscale_local_mean(img_scaled, (2, 2))
         # normalize channel values
-        img_downscaled /= 255# TODO: test to see if this is actually helpful, maybe research it
         batch_y[i] = np.pad(img_downscaled, ((0,0), (0, img_y-img_downscaled.shape[1])), 'maximum')
+        batch_x[i] /= 255
+        batch_y[i] /= 255
         batch_y = convert_to_sample(batch_x)
         #batch_y[i][class_to_id[metadatum[0]]] = 1
     #return np.expand_dims(batch_x, axis=3), batch_y
@@ -232,7 +233,9 @@ class PixelCNN(Conv2D):
         #print("MASKED KERNEL:")
         #print(K.eval(self.kernel * self.mask))
         # kernel used to be W
-        output = K.conv2d(x, self.kernel * self.mask,
+        # TODO: I did this just to make everything masked white, but can we do this when
+        # precalculating the mask instead?
+        output = K.conv2d(x, self.kernel * self.mask + (-self.mask + 1),
                           strides=self.strides,
                           padding=self.padding,
                           data_format=self.data_format)
