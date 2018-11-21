@@ -277,7 +277,8 @@ class PixelCNN(Conv2D):
 # TODO: here we're just having it generate from one class, should try to parameterize it
 # later to work for multiple
 input = Input(shape=(150, 450, 1), name='z_sampling')
-output = PixelCNN(1, 7, strides=1, mask_current=True, padding='same')(input)
+layer = PixelCNN(1, 7, strides=1, mask_current=True, padding='same')(input)
+output = PixelCNN(1, 7, strides=1, mask_current=True, padding='same')(layer)
 
 # layer = Dense(2700, activation='relu')(input)
 # layer = Dense(2700, activation='relu')(layer)
