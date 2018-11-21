@@ -6,3 +6,4 @@ data/*
 logs/*
 cartoons/date_ranges.txt
 cartoone/epoch-output/*
+**/__pycache__/**

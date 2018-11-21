@@ -75,80 +75,6 @@ class_to_id = dict((n, i) for i, n in enumerate(classes))
 id_to_class = dict((i, n) for i, n in enumerate(classes))
 num_classes = len(classes)
 
-# if outside the tolerance range, return None (it's not a valid datum)
-# if to large, crop from both sides to fit
-# if to small, pad with maximum value (white) to fit
-def scale_to_target(image, initial_y, target_y, shrink_tolerance, grow_tolerance):
-    if(target_y-initial_y > grow_tolerance or initial_y-target_y > shrink_tolerance):
-        #print('image oustide acceptable dimensions, ', image.shape)
-        return None
-    elif(initial_y > target_y):
-        #print('shrinking to fit target dimensions')
-        return image[:target_y]
-    else: # initial_y <= target_y
-        #print('growing to fit target dimensions')
-        padding = (target_y-initial_y)//2
-        return np.pad(image, ((padding, target_y - initial_y - padding),(0,0)), 'maximum')
-
-def get_image(metadata, datum_index):
-    img_x, img_y = 150, 450
-    metadatum = metadata[datum_index]
-    # TODO: we'll need to make it color for some strips later
-    img_raw = io.imread(data_root + 'images/' + metadatum[0] + metadatum[1] + '.png', as_gray=True)
-    # print('raw image: ', img_raw.shape)
-    img_scaled = scale_to_target(img_raw, metadatum[2], img_x*2, 5, 120)
-    return img_scaled
-
-
-# 1 is white, 0 is black, remember
-def convert_to_sample(img):
-    p_black = .1
-    sample = np.random.choice((0, 1), size=img.shape, p=(p_black, 1.0-p_black)) # p is probability of each option
-    # element-wise max
-    return np.maximum(sample, img)
-
-# TODO: optimize the batches to use np arrays from the getgo?
-def get_batch(batch_size, metadata):
-    img_x, img_y = 150, 450
-    batch_x = np.zeros((batch_size, img_x, img_y), dtype=float)
-    batch_y = np.zeros((batch_size, img_x, img_y), dtype=float)
-    for i in range(batch_size):
-        datum_indices = np.random.randint(0, len(metadata), size=2)
-        img_scaled = None
-        j = 0
-        while img_scaled is None:
-            img_scaled = get_image(metadata, (datum_indices[0] + j) % len(metadata))
-            metadatum = metadata[datum_indices[0]]
-            j += 1
-            #datum_indices[0] = (datum_indices[0] + 1) % len(metadata)
-        
-        # put it in a tensor after downscaling it and padding it
-        img_downscaled = downscale_local_mean(img_scaled, (2, 2))
-        # normalize channel values
-        # TODO: was maximum, but maybe manuallly setting to 1 will make ti work better for now
-        batch_x[i] = np.pad(img_downscaled, ((0,0), (0, img_y-img_downscaled.shape[1])), 'constant', constant_values=1)
-
-        img_scaled = None
-        j = 0
-        while img_scaled is None:
-            img_scaled = get_image(metadata, (datum_indices[1] + j) % len(metadata))
-            metadatum = metadata[datum_indices[1]]
-            j += 1
-            #datum_indices[1] = (datum_indices[1] + 1) % len(metadata)
-        
-        # put it in a tensor after downscaling it and padding it
-        img_downscaled = downscale_local_mean(img_scaled, (2, 2))
-        # normalize channel values
-        batch_y[i] = np.pad(img_downscaled, ((0,0), (0, img_y-img_downscaled.shape[1])), 'maximum')
-        batch_x[i] /= 255
-        batch_y[i] /= 255
-        batch_y = convert_to_sample(batch_x)
-        #batch_y[i][class_to_id[metadatum[0]]] = 1
-    #return np.expand_dims(batch_x, axis=3), batch_y
-    return np.expand_dims(batch_x, axis=3), np.expand_dims(batch_y, axis=3)
-    # TODO: need to have it differentiate different strip sizes, ie sunday vs weekday strips
-
-
 # TODO: may want to try using the ImageDataGenerator class, but the problem is that it would
 # have to be able to work with one batch at a time loaded with its respective metadata from
 # files
@@ -167,11 +93,83 @@ class DataProvider(Sequence):
         return len(self.metadata)
     
     def __getitem__(self, idx):
-        x, y = get_batch(self.batch_size, self.metadata)
+        x, y = self.get_batch(self.batch_size, self.metadata)
         if x is None or y is None:
             raise ValueError("input x or y is none")
-        return y, x
+        return x, y
 
+    # TODO: optimize the batches to use np arrays from the getgo?
+    def get_batch(self, batch_size, metadata):
+        img_x, img_y = 150, 450
+        batch_x = np.zeros((batch_size, img_x, img_y), dtype=float)
+        batch_y = np.zeros((batch_size, img_x, img_y), dtype=float)
+        for i in range(batch_size):
+            datum_indices = np.random.randint(0, len(metadata), size=2)
+            img_scaled = None
+            j = 0
+            while img_scaled is None:
+                img_scaled = self.get_image(metadata, (datum_indices[0] + j) % len(metadata))
+                metadatum = metadata[datum_indices[0]]
+                j += 1
+                #datum_indices[0] = (datum_indices[0] + 1) % len(metadata)
+            
+            # put it in a tensor after downscaling it and padding it
+            img_downscaled = downscale_local_mean(img_scaled, (2, 2))
+            # normalize channel values
+            # TODO: was maximum, but maybe manuallly setting to 1 will make ti work better for now
+            batch_x[i] = np.pad(img_downscaled, ((0,0), (0, img_y-img_downscaled.shape[1])), 'constant', constant_values=1)
+
+            img_scaled = None
+            j = 0
+            while img_scaled is None:
+                img_scaled = self.get_image(metadata, (datum_indices[1] + j) % len(metadata))
+                metadatum = metadata[datum_indices[1]]
+                j += 1
+                #datum_indices[1] = (datum_indices[1] + 1) % len(metadata)
+            
+            # put it in a tensor after downscaling it and padding it
+            img_downscaled = downscale_local_mean(img_scaled, (2, 2))
+            # normalize channel values
+            batch_y[i] = np.pad(img_downscaled, ((0,0), (0, img_y-img_downscaled.shape[1])), 'maximum')
+            batch_x[i] /= 255
+            batch_y[i] /= 255
+            batch_x = self.convert_to_sample(batch_y)
+            #batch_y[i][class_to_id[metadatum[0]]] = 1
+        #return np.expand_dims(batch_x, axis=3), batch_y
+        return np.expand_dims(batch_x, axis=3), np.expand_dims(batch_y, axis=3)
+        # TODO: need to have it differentiate different strip sizes, ie sunday vs weekday strips
+
+    # if outside the tolerance range, return None (it's not a valid datum)
+    # if to large, crop from both sides to fit
+    # if to small, pad with maximum value (white) to fit
+    def scale_to_target(self, image, initial_y, target_y, shrink_tolerance, grow_tolerance):
+        if(target_y-initial_y > grow_tolerance or initial_y-target_y > shrink_tolerance):
+            #print('image oustide acceptable dimensions, ', image.shape)
+            return None
+        elif(initial_y > target_y):
+            #print('shrinking to fit target dimensions')
+            return image[:target_y]
+        else: # initial_y <= target_y
+            #print('growing to fit target dimensions')
+            padding = (target_y-initial_y)//2
+            return np.pad(image, ((padding, target_y - initial_y - padding),(0,0)), 'maximum')
+
+    def get_image(self, metadata, datum_index):
+        img_x, img_y = 150, 450
+        metadatum = metadata[datum_index]
+        # TODO: we'll need to make it color for some strips later
+        img_raw = io.imread(data_root + 'images/' + metadatum[0] + metadatum[1] + '.png', as_gray=True)
+        # print('raw image: ', img_raw.shape)
+        img_scaled = self.scale_to_target(img_raw, metadatum[2], img_x*2, 5, 120)
+        return img_scaled
+
+
+    # 1 is white, 0 is black, remember
+    def convert_to_sample(self, img):
+        p_black = .1
+        sample = np.random.choice((0, 1), size=img.shape, p=(p_black, 1.0-p_black)) # p is probability of each option
+        # element-wise max
+        return np.maximum(sample, img)
 
 # TODO: condense these repeated layer patterns into "super layers"?
 # TODO: obviously, this will need tweaking, try adding dropout, more layers, etc
@@ -228,11 +226,6 @@ class PixelCNN(Conv2D):
     # passed to call: the input tensor
     def call(self, x, mask=None):
         ''' calculate gated activation maps given input maps '''
-        #print("KERNEL:")
-        #print(K.eval(self.kernel))
-        #print("MASKED KERNEL:")
-        #print(K.eval(self.kernel * self.mask))
-        # kernel used to be W
         # TODO: I did this just to make everything masked white, but can we do this when
         # precalculating the mask instead?
         output = K.conv2d(x, self.kernel * self.mask + (-self.mask + 1),
@@ -263,41 +256,8 @@ class PixelCNN(Conv2D):
         return super(PixelCNN, self).compute_output_shape(input_shape)
 
 
-
-# decoder
-# upscales the image between convolutions until it gets to the original dim,
-# so using different sized images will require this to be adjusted
-# input = Input(shape=(150, 450, 3, num_classes), name='z_sampling')
-
-#input = Input(shape=(num_classes,), name='z_sampling')
-#layer = Dense(67500, activation='sigmoid')(input)
-#layer = Reshape((150, 450, 1))(layer)
-#output = PixelCNN(1, 7, strides=1, mask_current=True, padding='same')(layer)
-
-# TODO: here we're just having it generate from one class, should try to parameterize it
-# later to work for multiple
 input = Input(shape=(150, 450, 1), name='z_sampling')
-layer = PixelCNN(1, 7, strides=1, mask_current=True, padding='same')(input)
-output = PixelCNN(1, 7, strides=1, mask_current=True, padding='same')(layer)
-
-# layer = Dense(2700, activation='relu')(input)
-# layer = Dense(2700, activation='relu')(layer)
-# layer = Dense(2700, activation='relu')(layer)
-# layer = Reshape((30, 90, 1))(layer)
-# layer = Conv2DTranspose(32, (3, 3), padding='same', activation='sigmoid')(layer)
-# layer = Conv2DTranspose(32, (3, 3), padding='same', activation='sigmoid')(layer)
-# layer = UpSampling2D(size=(5, 5))(layer)
-# layer = Conv2DTranspose(32, (3, 3), padding='same', activation='sigmoid')(layer)
-#layer = UpSampling2D(size=(2, 2))(layer)
-# output = Conv2D(1, (3, 3), padding='same', activation='sigmoid')(layer)
-
-
-# TODO: the shape is the same as returned by Conv2D, but that also throws an error
-# substituting with Conv2D returns ValueError: cannot select an axis to squeeze out which has size not equal to one
-# args are filters, rank, kernel size
-# layer = PixelCNN(32, 2, 16)(layer)
-# output = UpSampling2D(size=(6, 6))(layer)
-
+output = PixelCNN(1, 7, strides=1, mask_current=True, padding='same')(input)
 
 decoder = Model(input, output, name='decoder')
 
@@ -309,14 +269,8 @@ decoder.summary()
 def report_epoch_progress(epoch, logs):
     print('epoch progress report:')
     for i in range(num_classes):
-        #latent = np.zeros(num_classes)
-        #latent[i] = 1
-        #latent = np.expand_dims(latent, axis=0)
-        #latent = np.array([[0,0,0]])
-        #print(latent.shape)
-        # the prediction is coming back as None, why?
         example = data_test.__getitem__(3)
-        latent = example[1]
+        latent = example[0]
         #latent = np.expand_dims(latent, axis=0)
         print('LATENT: ', latent.shape)
         img = decoder.predict(latent)
@@ -327,7 +281,7 @@ def report_epoch_progress(epoch, logs):
         print('image shape:', img.shape)
         filename = 'epoch-output/latest-' + str(i) + '-predicted.png'
         io.imsave(filename, img)
-        actual = example[0]
+        actual = example[1]
         actual = np.squeeze(actual, axis=(0,3))
         actual *= 255
         actual = actual.astype(int)
