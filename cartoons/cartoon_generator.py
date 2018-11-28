@@ -21,7 +21,7 @@ from keras import backend as K
 from keras.engine.topology import Layer
 from keras.utils import Sequence
 from keras.models import Model
-from keras.layers import Multiply, Input, Conv2D, Conv2DTranspose, MaxPooling2D, UpSampling2D, Dense, Flatten, Activation, Reshape, BatchNormalization, LeakyReLU, PReLU
+from keras.layers import Multiply, Input, Conv2D, Conv3D, Conv2DTranspose, Conv3DTranspose, MaxPooling2D, MaxPooling3D, UpSampling2D, Dense, Flatten, Activation, Reshape, BatchNormalization, LeakyReLU, PReLU
 from keras.optimizers import RMSprop, Adam
 from keras.callbacks import LambdaCallback
 from keras.callbacks import ModelCheckpoint
@@ -259,11 +259,14 @@ class PixelCNN(Conv2D):
 
 
 input = Input(shape=(150, 450, 1), name='z_sampling')
-layer = PixelCNN(1, 7, strides=1, mask_current=True, padding='same')(input)
+layer = PixelCNN(8, 7, strides=1, mask_current=True, padding='same')(input)
 layer = PReLU()(layer)
-layer = Conv2D(1, 7, strides=1, padding='same')(layer)
+layer = Conv2D(8, 7, strides=1, padding='same')(layer)
 layer = PReLU()(layer)
-layer = Conv2D(1, 7, strides=1, padding='same')(layer)
+print(layer.shape)
+layer = Reshape((150, 450, 8, 1))(layer)
+layer = MaxPooling3D(pool_size=(1,1,8))(layer)
+layer = Reshape((150, 450, 1))(layer)
 output = PReLU()(layer)
 
 generator = Model(input, output, name='generator')
