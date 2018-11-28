@@ -166,7 +166,7 @@ class DataProvider(Sequence):
 
     # 1 is white, 0 is black, remember
     def convert_to_sample(self, img):
-        p_black = .3
+        p_black = .2
         sample = np.random.choice((0.0, 1.0), size=img.shape, p=(p_black, 1.0-p_black)) # p is probability of each option
         # element-wise max
         return np.maximum(sample, img)
@@ -352,7 +352,7 @@ data_train = DataProvider(metadata_train)
 data_test = DataProvider(metadata_test)
 epochs = 60
 steps_per_epoch = num_data//data_train.batch_size
-discriminator_updates = 3
+discriminator_updates = 1
 report_epoch_progress(None, None)
 
 gan.summary()
