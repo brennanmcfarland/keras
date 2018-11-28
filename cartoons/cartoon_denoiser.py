@@ -21,13 +21,16 @@ from keras import backend as K
 from keras.engine.topology import Layer
 from keras.utils import Sequence
 from keras.models import Model
-from keras.layers import Multiply, Input, Conv2D, Conv2DTranspose, MaxPooling2D, UpSampling2D, Dense, Flatten, Activation, Reshape, BatchNormalization, LeakyReLU, PReLU
+from keras.layers import *
+from keras.activations import *
+#from keras.layers import Multiply, Input, Conv2D, Conv2DTranspose, MaxPooling2D, UpSampling2D, Dense, Flatten, Activation, Reshape
 from keras.optimizers import RMSprop, Adam
 from keras.callbacks import LambdaCallback
 from keras.callbacks import ModelCheckpoint
 from keras.callbacks import TensorBoard
 from keras import initializers
 
+# TODO: took out the division by 255 to see if its rounding error, but should still normalize
 
 # reparameterization trick
 # instead of sampling from Q(z|X), sample eps = N(0,I)
@@ -131,8 +134,6 @@ class DataProvider(Sequence):
             img_downscaled = downscale_local_mean(img_scaled, (2, 2))
             # normalize channel values
             batch_y[i] = np.pad(img_downscaled, ((0,0), (0, img_y-img_downscaled.shape[1])), 'maximum')
-            batch_x[i] /= 255.0
-            batch_y[i] /= 255.0
             batch_x = self.convert_to_sample(batch_y)
             #batch_y[i][class_to_id[metadatum[0]]] = 1
         #return np.expand_dims(batch_x, axis=3), batch_y
@@ -167,7 +168,7 @@ class DataProvider(Sequence):
     # 1 is white, 0 is black, remember
     def convert_to_sample(self, img):
         p_black = .3
-        sample = np.random.choice((0.0, 1.0), size=img.shape, p=(p_black, 1.0-p_black)) # p is probability of each option
+        sample = np.random.choice((0, 1), size=img.shape, p=(p_black, 1.0-p_black)) # p is probability of each option
         # element-wise max
         return np.maximum(sample, img)
 
@@ -217,6 +218,7 @@ class PixelCNN(Conv2D):
 
         self.mask = K.variable(self.mask)
 
+        # TODO: add bias?
         self.bias = None
         self.built = True
         #super(PixelCNN, self).build(input_shape)
@@ -237,14 +239,12 @@ class PixelCNN(Conv2D):
         # but I think that was just to specify the output shape and is
         # now deprecated
         if self.bias:
-            output += K.reshape(self.get_weights()[1], (1, 1, 1, self.filters))
-        #if self.bias:
-        #    if self.data_format == 'channels_last':
-        #        # get_weights() returns [W, b]
-        #        output += K.reshape(self.get_weights()[1], (1, 1, 1, self.filters))
-        #    else:
-        #        print(self.data_format)
-        #        raise ValueError('PixelCNN layer works with tensorflow backend only')
+            if self.data_format == 'channels_last':
+                # get_weights() returns [W, b]
+                output += K.reshape(self.get_weights()[1], (1, 1, 1, self.num_filters))
+            else:
+                print(self.data_format)
+                raise ValueError('PixelCNN layer works with tensorflow backend only')
         output = self.activation(output)
         return output
 
@@ -259,37 +259,22 @@ class PixelCNN(Conv2D):
 
 
 input = Input(shape=(150, 450, 1), name='z_sampling')
-layer = PixelCNN(1, 7, strides=1, mask_current=True, padding='same')(input)
-layer = PReLU()(layer)
+#layer = PixelCNN(1, 7, strides=1, mask_current=True, padding='same')(input)
+layer = Conv2D(1, 7, strides=1, padding='same')(input)
+layer = ReLU()(layer)
 layer = Conv2D(1, 7, strides=1, padding='same')(layer)
-layer = PReLU()(layer)
+layer = ReLU()(layer)
 layer = Conv2D(1, 7, strides=1, padding='same')(layer)
-output = PReLU()(layer)
+layer = ReLU()(layer)
 
-generator = Model(input, output, name='generator')
+output = layer
+#output = Conv2D(1, 7, strides=1, padding='same', activation='relu')(input)
+decoder = Model(input, output, name='decoder')
 
 original_dim = 150 * 450 # TODO: set this to just the dimensions of the input later instead of hard coding it
-
-d_input = Input(shape=(150, 450, 1), name='discriminator_input')
-layer = Conv2D(filters=32, kernel_size=(4, 4), strides=4, padding='same')(d_input)
-layer = BatchNormalization()(layer)
-layer = LeakyReLU(.25)(layer)
-layer = Conv2D(filters=32, kernel_size=(4, 4), strides=4, padding='same')(layer)
-layer = LeakyReLU(.25)(layer)
-layer = Conv2D(filters=32, kernel_size=(4, 4), strides=4, padding='same')(layer)
-layer = LeakyReLU(.25)(layer)
-layer = Flatten()(layer)
-layer = Dense(128)(layer)
-d_output = Dense(1)(layer)
-
-discriminator = Model(d_input, d_output, name='discriminator')
-
-gan_inputs = Input(shape=(150, 450, 1))
-gan_images = generator(gan_inputs)
-gan_output = discriminator(gan_images)
-
-gan = Model(inputs=gan_inputs, outputs=[gan_images, gan_output])
-
+optimizer = Adam(lr=.00001)
+decoder.compile(loss='binary_crossentropy', optimizer=optimizer) # TODO: find out which optimizer works best
+decoder.summary()
 
 def report_epoch_progress(epoch, logs):
     print('epoch progress report:')
@@ -298,97 +283,39 @@ def report_epoch_progress(epoch, logs):
         latent = example[0]
         #latent = np.expand_dims(latent, axis=0)
         print('LATENT: ', latent.shape)
-        img = generator.predict(latent)
+        img = decoder.predict(latent)
         print(img.shape)
         img = np.squeeze(img, axis=(0,3))
-        img *= 255
         img = img.astype(int)
         print('image shape:', img.shape)
         filename = 'epoch-output/latest-' + str(i) + '-predicted.png'
         io.imsave(filename, img)
         actual = example[1]
         actual = np.squeeze(actual, axis=(0,3))
-        actual *= 255
         actual = actual.astype(int)
         filename2 = 'epoch-output/latest-' + str(i) + '-actual.png'
         io.imsave(filename2, actual)
 
         latent = np.squeeze(latent, axis=(0,3))
-        latent *= 255
         latent = latent.astype(int)
         filename3 = 'epoch-output/latest-' + str(i) + '-input.png'
         io.imsave(filename3, latent)
 
 
-g_optimizer = Adam(lr=.0001)
-d_optimizer = Adam(lr=.0001)
-gan_optimizer = Adam(lr=.0001)
-
-# TODO: not sure why setting trainable
-discriminator.trainable = True
-discriminator.compile(optimizer=d_optimizer, loss='mse')
-discriminator.trainable = False
-loss = ['binary_crossentropy', 'mse']
-loss_weights = [100, 1] # TODO: play with
-gan.compile(optimizer=gan_optimizer, loss=loss, loss_weights=loss_weights)
-discriminator.trainable = True
-
-
-#generator.compile(loss='binary_crossentropy', optimizer=optimizer) # TODO: find out which optimizer works best
-#generator.summary()
-
 progress_callback = LambdaCallback(on_epoch_end=report_epoch_progress)
 checkpoint_callback = ModelCheckpoint('./model-checkpoint.ckpt')
 tensorboard_callback = TensorBoard(log_dir='../logs/tensorboard-logs', write_images=True)
-# TODO: get other callbacks working
-# callbacks = [progress_callback, checkpoint_callback, tensorboard_callback]
-callbacks = [progress_callback]
+callbacks = [progress_callback, checkpoint_callback, tensorboard_callback]
 
 # TODO: add validation data (split the training data)
 data_train = DataProvider(metadata_train)
 data_test = DataProvider(metadata_test)
 epochs = 60
-steps_per_epoch = num_data//data_train.batch_size
-discriminator_updates = 3
 report_epoch_progress(None, None)
-
-gan.summary()
-
-# manually set callbacks since we're doing a custom fit
-for callback in callbacks:
-    callback.set_model(gan)
-
-for epoch in range(epochs):
-    for step in range(steps_per_epoch):
-        current_batch = data_train.__getitem__(0)
-        # generate "fake" images
-        generator_inputs = current_batch[0]
-        generated_images = generator.predict(generator_inputs, batch_size=1)
-        # train discriminator on "real" images from the dataset and "fake" ones that were generated
-        true_inputs, true_labels = current_batch[1], np.ones(len(current_batch[1]))
-        fake_inputs, fake_labels = generated_images, np.zeros(len(generated_images))
-        for _ in range(discriminator_updates):
-            d_loss_real = discriminator.train_on_batch(true_inputs, true_labels)
-            d_loss_fake = discriminator.train_on_batch(fake_inputs, fake_labels)
-            d_loss = .5 * np.sum((d_loss_real, d_loss_fake))
-        # halt training on the discriminator
-        discriminator.trainable = False
-        # train generator to try to fool the discriminator
-        g_loss = gan.train_on_batch(generator_inputs, [true_inputs, true_labels])
-        # and allow training on the discriminator to continue
-        discriminator.trainable = True
-        print('step ', step, '/', steps_per_epoch, 'd_loss: ', d_loss, 'g_loss: ', g_loss)
-    # manually call callbacks since we're doing a custom fit
-    logs = {'loss': g_loss}
-    for callback in callbacks:
-        callback.on_epoch_end(epoch, logs)
-# manually terminate callbacks since we're doing a custom fit
-for callback in callbacks:
-    callback.on_train_end('_')
-#generator.fit_generator(
-#    data_train,
-#    validation_data=data_test,
-#    steps_per_epoch=num_data//data_train.batch_size,
-#    epochs=epochs,
-#    callbacks=callbacks
-#)
+decoder.fit_generator(
+    data_train,
+    validation_data=data_test,
+    steps_per_epoch=num_data//data_train.batch_size,
+    epochs=epochs,
+    callbacks=callbacks
+)
