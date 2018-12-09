@@ -328,9 +328,9 @@ def report_epoch_progress(epoch, logs):
         io.imsave(filename3, latent)
 
 
-g_optimizer = Adam(lr=.00001)
-d_optimizer = Adam(lr=.00001)
-gan_optimizer = Adam(lr=.00001)
+g_optimizer = Adam(lr=.0001)
+d_optimizer = Adam(lr=.0001)
+gan_optimizer = Adam(lr=.0001)
 
 # TODO: not sure why setting trainable
 discriminator.trainable = True
