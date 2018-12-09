@@ -259,15 +259,19 @@ class PixelCNN(Conv2D):
 
 
 input = Input(shape=(150, 450, 1), name='z_sampling')
-layer = PixelCNN(8, 7, strides=1, mask_current=True, padding='same')(input)
+#layer = PixelCNN(8, 7, strides=1, mask_current=True, padding='same')(input)
+#layer = PReLU()(layer)
+layer = Conv2DTranspose(8, 7, strides=1, padding='same')(input)
+layer = BatchNormalization(momentum=.9)(layer)
 layer = PReLU()(layer)
-layer = Conv2D(8, 7, strides=1, padding='same')(layer)
+layer = Conv2DTranspose(8, 7, strides=1, padding='same')(layer)
+layer = BatchNormalization(momentum=.9)(layer)
 layer = PReLU()(layer)
-print(layer.shape)
-layer = Reshape((150, 450, 8, 1))(layer)
-layer = MaxPooling3D(pool_size=(1,1,8))(layer)
-layer = Reshape((150, 450, 1))(layer)
-output = PReLU()(layer)
+layer = Conv2DTranspose(8, 7, strides=1, padding='same')(layer)
+layer = BatchNormalization(momentum=.9)(layer)
+layer = PReLU()(layer)
+layer = Conv2DTranspose(1, 7, strides=1, padding='same')(layer)
+output = Activation('sigmoid')(layer)
 
 generator = Model(input, output, name='generator')
 
@@ -283,6 +287,7 @@ layer = Conv2D(filters=32, kernel_size=(4, 4), strides=4, padding='same')(layer)
 layer = LeakyReLU(.25)(layer)
 layer = Flatten()(layer)
 layer = Dense(128)(layer)
+layer = Activation('sigmoid')(layer)
 d_output = Dense(1)(layer)
 
 discriminator = Model(d_input, d_output, name='discriminator')
@@ -304,28 +309,28 @@ def report_epoch_progress(epoch, logs):
         img = generator.predict(latent)
         print(img.shape)
         img = np.squeeze(img, axis=(0,3))
-        img *= 255
+        img *= 255.0
         img = img.astype(int)
         print('image shape:', img.shape)
         filename = 'epoch-output/latest-' + str(i) + '-predicted.png'
         io.imsave(filename, img)
         actual = example[1]
         actual = np.squeeze(actual, axis=(0,3))
-        actual *= 255
+        actual *= 255.0
         actual = actual.astype(int)
         filename2 = 'epoch-output/latest-' + str(i) + '-actual.png'
         io.imsave(filename2, actual)
 
         latent = np.squeeze(latent, axis=(0,3))
-        latent *= 255
+        latent *= 255.0
         latent = latent.astype(int)
         filename3 = 'epoch-output/latest-' + str(i) + '-input.png'
         io.imsave(filename3, latent)
 
 
-g_optimizer = Adam(lr=.0001)
-d_optimizer = Adam(lr=.0001)
-gan_optimizer = Adam(lr=.0001)
+g_optimizer = Adam(lr=.00001)
+d_optimizer = Adam(lr=.00001)
+gan_optimizer = Adam(lr=.00001)
 
 # TODO: not sure why setting trainable
 discriminator.trainable = True
